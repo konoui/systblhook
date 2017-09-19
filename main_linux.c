@@ -66,7 +66,7 @@ asmlinkage static int fake_sys_exit_group(int error_code) {
 	task = current;
 	int i = 0;
 	do {
-		printk("test %d %s: pid(%d) tgid(%d) \n", i, task->comm, task->pid, task->tgid);
+		printk("%d %s: pid(%d) tgid(%d) \n", i, task->comm, task->pid, task->tgid);
 		i++;
 	} while_each_thread(leader, task);
 	rcu_read_unlock();
