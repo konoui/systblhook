@@ -1,0 +1,27 @@
+first
+[ +25.316522] hook msr: 0xffffffff81824490
+[  +0.000004] orig dsptchr 0xffffffff81824490 dsptchr page 0xffffffff81824000
+[  +0.000001] orig_dispatcher pte: ffff88021540c120 *pte 0x2824161
+[  +0.000002] exec flag 1 write flag 2
+[  +0.000002] present 257
+[  +0.000001] k_page pte: ffff8800bfeb5ab0, *pte 0xbff56163
+
+second
+[ +10.289919] hook msr: 0xffffffff81824490
+[  +0.000008] orig dsptchr 0xffffffff81824490 dsptchr page 0xffffffff81824000
+[  +0.000004] orig_dispatcher pte: ffff88021540c120 *pte 0xbff56163
+[  +0.000005] exec flag 1 write flag 2
+[  +0.000003] present 257
+[  +0.000003] k_page pte: ffff8800d4224b10, *pte 0xd4162163
+
+third
+[ +29.976756] hook msr: 0xffffffff81824490
+[  +0.000004] orig dsptchr 0xffffffff81824490 dsptchr page 0xffffffff81824000
+[  +0.000002] orig_dispatcher pte: ffff88021540c120 *pte 0xd4162163
+[  +0.000003] exec flag 1 write flag 2
+[  +0.000001] present 257
+[  +0.000001] k_page pte: ffff880212a21660, *pte 0x2128cc163
+
+
+成功している！！
+

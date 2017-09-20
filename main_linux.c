@@ -4,122 +4,67 @@
 #include <linux/smp.h>
 #include <linux/syscalls.h>
 #include <asm/syscall.h>
+#include <linux/vmalloc.h>
+#include <linux/slab.h>
+#include <asm/pgtable.h>
 
-
+//#define MSR_LSTAR	0xC0000082
 sys_call_ptr_t *syscall_table = (sys_call_ptr_t *)SYSCALL_TBL;
+void *k_page = NULL;
+uint64_t orig_dispatcher;
 
-typedef long (*_do_fork_hack) (unsigned long, unsigned long, 
-		unsigned long, 
-		int __user *, int __user *, 
-		unsigned long);
-_do_fork_hack my_do_fork = (_do_fork_hack) DO_FORK;
+static inline uint64_t get_dispatcher_from_msr(void)
+{
+	uint32_t low = 0, high = 0;
+	uint64_t address;
 
-extern void fake_stub_clone(void);
-void *original_stub_clone;
-void *original_sys_clone = (void *) SYS_CLONE;
-void *original_sys_fork;
-void *original_sys_vfork;
+	rdmsr(MSR_LSTAR,low, high);
+	address = 0;
+	address |= high;
+	address = address << 32;
+	address |= low;
 
+	pr_info("hook msr: 0x%lx\n", address);
 
-asmlinkage long fake_sys_clone(unsigned long clone_flags, unsigned long newsp, 
-		int __user *parent_tidptr, 
-		int __user *child_tidptr, 
-		unsigned long tls) {
-
-	printk("fake clone\n");
-
-	return my_do_fork(clone_flags, newsp, 0, parent_tidptr, child_tidptr, tls);
+	return address;
 }
-
-asmlinkage static long fake_sys_fork(void) {
-	printk("fake fork\n");
-	return my_do_fork(SIGCHLD, 0, 0, NULL, NULL, 0);
-}
-
-asmlinkage static long fake_sys_vfork(void) {
-	printk("fake vfork\n");
-	return my_do_fork(CLONE_VFORK | CLONE_VM | SIGCHLD, 0, 0, NULL, NULL, 0);
-}
-
-//----------------------- exit ----------------------
-typedef void (*do_exit_hack) (long);
-typedef void (*do_group_exit_hack) (int);
-
-void *original_sys_exit;
-void *original_sys_exit_group;
-
-do_exit_hack my_do_exit = (do_exit_hack) DO_EXIT;
-do_group_exit_hack my_do_group_exit = (do_group_exit_hack) DO_GROUP_EXIT;
-
-asmlinkage static int fake_sys_exit(int error_code) {
-	printk("fake exit\n");
-	my_do_exit((error_code & 0xff) << 8);
-}
-
-asmlinkage static int fake_sys_exit_group(int error_code) {
-	printk("fake exit group\n");
-
-	struct task_struct *task, *leader;
-
-	rcu_read_lock();
-	leader = current;
-	task = current;
-	int i = 0;
-	do {
-		printk("%d %s: pid(%d) tgid(%d) \n", i, task->comm, task->pid, task->tgid);
-		i++;
-	} while_each_thread(leader, task);
-	rcu_read_unlock();
-
-	my_do_group_exit((error_code & 0xff) << 8);
-	return 0;
-}
-//----------------------- exit ----------------------
 
 int __init main_init(void)
 {
+	uint64_t orig_dispatcher_page;
+	unsigned int l, k;
+	pte_t *orig_pte;
+	pte_t *k_page_pte;
 
-	unsigned int l;
-	pte_t *pte;
+	orig_dispatcher = get_dispatcher_from_msr();
+	orig_dispatcher_page = orig_dispatcher & PAGE_MASK;
+	pr_info("orig dsptchr 0x%llx dsptchr page 0x%llx\n", orig_dispatcher, orig_dispatcher_page);
 
-	pte = lookup_address((long unsigned int)syscall_table, &l);
-	pte->pte |= _PAGE_RW;
+	orig_pte = lookup_address(orig_dispatcher_page, &l);
+	pr_info("orig_dispatcher pte: %p *pte 0x%llx\n", orig_pte, *orig_pte);
 
-	original_stub_clone =   syscall_table[__NR_clone];
-	syscall_table[__NR_clone] = (void *) &fake_stub_clone;
+	k_page = kmalloc(4096*2, GFP_KERNEL);
+	memcpy(k_page, (void *)orig_dispatcher_page, 4096);
+	k_page_pte = lookup_address((uint64_t)k_page, &k);
+	
+	*k_page_pte = pte_mkwrite(*k_page_pte);
+	*k_page_pte = pte_mkexec(*k_page_pte);
 
-	original_sys_fork =  syscall_table[__NR_fork];
-	syscall_table[__NR_fork] = (void *) &fake_sys_fork;
+	pr_info("exec flag %d write flag %d\n", pte_exec(*k_page_pte), pte_write(*k_page_pte));
+	pr_info("present %d\n", pte_present(*k_page_pte));
+	pr_info("k_page pte: %p, *pte 0x%llx\n", k_page_pte, *k_page_pte);
 
-	original_sys_vfork =   syscall_table[__NR_vfork];
-	syscall_table[__NR_vfork] = (void *) &fake_sys_vfork;
+	*orig_pte = *k_page_pte;
 
-	original_sys_exit = syscall_table[__NR_exit];
-	syscall_table[__NR_exit] = (void *) &fake_sys_exit;
-
-	original_sys_exit_group = syscall_table[__NR_exit_group];
-	syscall_table[__NR_exit_group] = (void *) &fake_sys_exit_group;
-
-	pte->pte &= ~_PAGE_RW;
 	return 0;
 }
  
 void __exit main_cleanup(void)
 {
-	unsigned int l;
-	pte_t *pte;
-
-	pte = lookup_address((long unsigned int)syscall_table, &l);
-	pte->pte |= _PAGE_RW;
-
-	syscall_table[__NR_clone] = original_stub_clone;
-	syscall_table[__NR_fork] = original_sys_fork;
-	syscall_table[__NR_vfork] = original_sys_vfork;
-
-	syscall_table[__NR_exit] = original_sys_exit;
-	syscall_table[__NR_exit_group] = original_sys_exit_group;
-
-	pte->pte &= ~_PAGE_RW;
+	unsigned int l, k;
+	pte_t *orig_pte;
+	pte_t *k_page_pte;
+	
 	return;
 }
 
