@@ -8,63 +8,94 @@
 #include <linux/slab.h>
 #include <asm/pgtable.h>
 
-//#define MSR_LSTAR	0xC0000082
-sys_call_ptr_t *syscall_table = (sys_call_ptr_t *)SYSCALL_TBL;
-void *k_page = NULL;
-uint64_t orig_dispatcher;
+#include <asm/syscall.h>
 
-static inline uint64_t get_dispatcher_from_msr(void)
+extern int entry_SYSCALL_64(void);
+DEFINE_PER_CPU(uint64_t, rsp_scratch);
+sys_call_ptr_t *sys_call_table_v2 = (sys_call_ptr_t *)SYSCALL_TBL;
+// XXX
+void syscall_return_slowpath(struct pt_regs *regs)
 {
-	uint32_t low = 0, high = 0;
+	return;
+}
+
+static inline void hook_syscall(void)
+{
+	wrmsrl(MSR_LSTAR, (uint64_t)entry_SYSCALL_64);
+}
+
+static inline uint64_t get_entry_syscall_from_msr(void)
+{
 	uint64_t address;
+	rdmsrl(MSR_LSTAR, address);
 
-	rdmsr(MSR_LSTAR,low, high);
-	address = 0;
-	address |= high;
-	address = address << 32;
-	address |= low;
-
-	pr_info("hook msr: 0x%lx\n", address);
+	pr_info("msr lstar: 0x%lx\n", address);
 
 	return address;
 }
 
+void *fake_entry = NULL;
+uint64_t orig_entry_page;
+pte_t orig_entry_pte_v;
+
+static inline pte_t alloc_fake_entry_pte(void *entry_page)
+{
+	pte_t *fake_entry_pte;
+	unsigned int l;
+
+	fake_entry = kmalloc(4096*2, GFP_KERNEL);
+	memcpy(fake_entry, entry_page, 4096);
+	fake_entry_pte = lookup_address((uint64_t)fake_entry, &l);
+	
+	*fake_entry_pte = pte_mkwrite(*fake_entry_pte);
+	*fake_entry_pte = pte_mkexec(*fake_entry_pte);
+
+	pr_info("exec flag %d write flag %d\n", pte_exec(*fake_entry_pte), pte_write(*fake_entry_pte));
+	pr_info("fake entry pte: %p, *pte 0x%llx\n", fake_entry_pte, *fake_entry_pte);
+
+	return *fake_entry_pte;
+}
+
+static inline void hook_entry_syscall(void)
+{
+	uint64_t orig_entry;
+	unsigned int l;
+	pte_t *orig_entry_pte;
+	pte_t fake_entry_pte_v;
+
+	orig_entry = get_entry_syscall_from_msr();
+	orig_entry_page = orig_entry & PAGE_MASK;
+	pr_info("orig entry 0x%llx entry page 0x%llx\n", orig_entry, orig_entry_page);
+
+	orig_entry_pte = lookup_address(orig_entry_page, &l);
+	pr_info("orig entry pte: %p *pte 0x%llx\n", orig_entry_pte, *orig_entry_pte);
+
+	fake_entry_pte_v = alloc_fake_entry_pte((void*)orig_entry_page);
+
+	orig_entry_pte_v = *orig_entry_pte;
+	*orig_entry_pte  = fake_entry_pte_v;
+	/* XXX */
+	/* TLB FLUSH */
+}
+
 int __init main_init(void)
 {
-	uint64_t orig_dispatcher_page;
-	unsigned int l, k;
-	pte_t *orig_pte;
-	pte_t *k_page_pte;
-
-	orig_dispatcher = get_dispatcher_from_msr();
-	orig_dispatcher_page = orig_dispatcher & PAGE_MASK;
-	pr_info("orig dsptchr 0x%llx dsptchr page 0x%llx\n", orig_dispatcher, orig_dispatcher_page);
-
-	orig_pte = lookup_address(orig_dispatcher_page, &l);
-	pr_info("orig_dispatcher pte: %p *pte 0x%llx\n", orig_pte, *orig_pte);
-
-	k_page = kmalloc(4096*2, GFP_KERNEL);
-	memcpy(k_page, (void *)orig_dispatcher_page, 4096);
-	k_page_pte = lookup_address((uint64_t)k_page, &k);
-	
-	*k_page_pte = pte_mkwrite(*k_page_pte);
-	*k_page_pte = pte_mkexec(*k_page_pte);
-
-	pr_info("exec flag %d write flag %d\n", pte_exec(*k_page_pte), pte_write(*k_page_pte));
-	pr_info("present %d\n", pte_present(*k_page_pte));
-	pr_info("k_page pte: %p, *pte 0x%llx\n", k_page_pte, *k_page_pte);
-
-	*orig_pte = *k_page_pte;
-
+//	hook_entry_syscall();
+	hook_entry_syscall();
+	pr_info("%p\n", entry_SYSCALL_64);
 	return 0;
 }
- 
+
 void __exit main_cleanup(void)
 {
-	unsigned int l, k;
-	pte_t *orig_pte;
-	pte_t *k_page_pte;
-	
+	unsigned int l;
+	pte_t *entry_pte;
+	entry_pte = lookup_address(orig_entry_page, &l);
+	pr_info("entry pte: %p *pte 0x%llx\n", entry_pte, *entry_pte);
+	pr_info("orig_entry_pte: 0x%llx\n", orig_entry_pte_v);
+
+	*entry_pte = orig_entry_pte_v;
+	kfree(fake_entry);
 	return;
 }
 
