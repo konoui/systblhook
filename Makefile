@@ -6,7 +6,7 @@ DO_GROUP_EXIT = 0x$(shell $(EXTRACT) do_group_exit)
 SYS_CLONE = 0x$(shell $(EXTRACT) sys_clone)
 
 obj-m := systblhook.o
-systblhook-objs := main_linux.o
+systblhook-objs := entry_64.o main_linux.o
 ccflags-y := -O2 -Wno-format -Wno-declaration-after-statement -Wno-unused-function -std=gnu99
 ccflags-y += -DSYSCALL_TBL=$(SYSCALL_TBL) -DDO_FORK=$(DO_FORK) -DDO_EXIT=$(DO_EXIT) -DDO_GROUP_EXIT=$(DO_GROUP_EXIT) -DSYS_CLONE=$(SYS_CLONE)
 
