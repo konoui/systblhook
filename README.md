@@ -1,3 +1,2 @@
-# clone fork prototype
-* http://elixir.free-electrons.com/linux/v4.2.8/source/kernel/fork.c
-
+# Systemcall Table Hooking
+Hook systemcall by seting page table as writable and manipulating systemcall table entry.
